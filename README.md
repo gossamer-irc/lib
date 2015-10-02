@@ -1,0 +1,2 @@
+# lib
+Gossamer IRC Library
