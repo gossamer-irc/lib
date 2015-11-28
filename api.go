@@ -16,7 +16,7 @@ func (n *Node) BeginLink(reader io.ReadCloser, writer io.WriteCloser, logger io.
 	link.WriteMessage(SSHello{1, timestampMs, n.config.ServerName, n.config.ServerDesc, n.DefaultSubnet.Name})
 }
 
-func (n *Node) JoinOrCreateChannel(client *Client, subnet *Subnet, name string) error {
+func (n *Node) JoinOrCreateChannel(client *Client, subnet *Subnet, name string) (*Channel, error) {
 	lname := strings.ToLower(name)
 	channel, found := subnet.Channel[lname]
 	if !found {
@@ -35,6 +35,7 @@ func (n *Node) JoinOrCreateChannel(client *Client, subnet *Subnet, name string) 
 		}
 		channel.LocalMember[client] = mship
 		channel.Member[client] = mship
+		subnet.Channel[lname] = channel
 
 		n.SendAll(channel.Serialize())
 
@@ -44,7 +45,7 @@ func (n *Node) JoinOrCreateChannel(client *Client, subnet *Subnet, name string) 
 		mship, found := channel.Member[client]
 		if found {
 			// Already an existing member.
-			return AlreadyAMemberError{}
+			return nil, AlreadyAMemberError{}
 		}
 
 		// Here is where we would check bans, if they were implemented.
@@ -59,5 +60,17 @@ func (n *Node) JoinOrCreateChannel(client *Client, subnet *Subnet, name string) 
 
 		n.Handler.OnChannelJoin(channel, client, mship)
 	}
-	return nil
+	return channel, nil
+}
+
+func (n *Node) ChannelMessage(client *Client, channel *Channel, message string) {
+	n.Handler.OnChannelMessage(client, channel, message)
+}
+
+func (n *Node) ChangeChannelMode(client *Client, channel *Channel, channelModes ChannelModeDelta, memberModes []MemberModeDelta) {
+	channelModes, memberModes = FilterChannelModes(channel, client, channelModes, memberModes)
+	appliedDelta, appliedMembers := channel.ApplyModeDelta(channelModes, memberModes)
+	if !appliedDelta.IsEmpty() || len(appliedMembers) > 0 {
+		n.Handler.OnChannelModeChange(channel, client, appliedDelta, appliedMembers)
+	}
 }

@@ -52,10 +52,14 @@ func ParseChannelModeString(modes string, args []string, resolveClient ResolveCl
 			}
 
 			memberMap[target] = delta
-		case 't':
-			channel.TopicProtected = operation
+		case 'm':
+			channel.Moderated = operation
 		case 'n':
 			channel.NoExternalMessages = operation
+		case 's':
+			channel.Secret = operation
+		case 't':
+			channel.TopicProtected = operation
 		}
 		modes = modes[size:]
 	}
@@ -135,4 +139,49 @@ func SerializeChannelModes(channel ChannelModeDelta, member []MemberModeDelta, s
 
 	args[0] = string(modes)
 	return strings.Join(args, " ")
+}
+
+func FilterChannelModes(channel *Channel, actor *Client, channelMode ChannelModeDelta, memberDelta []MemberModeDelta) (ChannelModeDelta, []MemberModeDelta) {
+	membership, found := channel.Member[actor]
+	if !found {
+		// This user has no authority.
+		return ChannelModeDelta{}, []MemberModeDelta{}
+	}
+
+	outMode := ChannelModeDelta{}
+	outMember := make([]MemberModeDelta, 0)
+
+	for _, delta := range memberDelta {
+		outDelta := MemberModeDelta{
+			Client: delta.Client,
+		}
+
+		if membership.IsOwner {
+			outDelta = delta
+		} else if membership.IsOp {
+			outDelta.IsOp = delta.IsOp
+			outDelta.IsHalfop = delta.IsHalfop
+			outDelta.IsVoice = delta.IsVoice
+		} else if membership.IsHalfop {
+			outDelta.IsHalfop = delta.IsHalfop
+			outDelta.IsVoice = delta.IsVoice
+		}
+
+		if false ||
+			outDelta.IsOwner != MODE_UNCHANGED ||
+			outDelta.IsAdmin != MODE_UNCHANGED ||
+			outDelta.IsOp != MODE_UNCHANGED ||
+			outDelta.IsHalfop != MODE_UNCHANGED ||
+			outDelta.IsVoice != MODE_UNCHANGED {
+			outMember = append(outMember, outDelta)
+		}
+	}
+
+	if membership.IsOwner || membership.IsAdmin || membership.IsOp || membership.IsHalfop {
+		outMode.Moderated = channelMode.Moderated
+		outMode.NoExternalMessages = channelMode.NoExternalMessages
+		outMode.Secret = channelMode.Secret
+		outMode.TopicProtected = channelMode.TopicProtected
+	}
+	return outMode, outMember
 }

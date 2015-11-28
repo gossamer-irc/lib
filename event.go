@@ -4,7 +4,7 @@ type EventHandler interface {
 	OnServerLink(server *Server, hub *Server)
 	OnChannelJoin(channel *Channel, client *Client, membership *Membership)
 	OnChannelMessage(from *Client, to *Channel, message string)
-	OnChannelModeChange(channel *Channel, by *Client, delta []MemberModeDelta)
+	OnChannelModeChange(channel *Channel, by *Client, delta ChannelModeDelta, memberDelta []MemberModeDelta)
 	OnPrivateMessage(from *Client, to *Client, message string)
 }
 
@@ -36,8 +36,8 @@ func (peh *ProxyEventHandler) OnChannelMessage(from *Client, to *Channel, messag
 	}
 }
 
-func (peh *ProxyEventHandler) OnChannelModeChange(channel *Channel, by *Client, delta []MemberModeDelta) {
+func (peh *ProxyEventHandler) OnChannelModeChange(channel *Channel, by *Client, delta ChannelModeDelta, memberDelta []MemberModeDelta) {
 	if peh.Delegate != nil {
-		peh.Delegate.OnChannelModeChange(channel, by, delta)
+		peh.Delegate.OnChannelModeChange(channel, by, delta, memberDelta)
 	}
 }

@@ -7,6 +7,17 @@ import (
 
 type ModeDelta uint8
 
+func (delta ModeDelta) String() string {
+	switch delta {
+	case MODE_ADDED:
+		return "+"
+	case MODE_REMOVED:
+		return "-"
+	default:
+		return "."
+	}
+}
+
 const (
 	MODE_UNCHANGED ModeDelta = iota
 	MODE_ADDED
@@ -60,14 +71,100 @@ func (ch *Channel) Serialize() *SSChannel {
 		Name:    ch.Name,
 		Subnet:  ch.Subnet.Name,
 		Ts:      ch.Ts,
-		Members: make([]*SSMembership, len(ch.Member)),
+		Members: make([]*SSMembership, 0, len(ch.Member)),
 	}
-	idx := 0
-	for _, member := range ch.Member {
-		msg.Members[idx] = member.Serialize(nil, nil)
-		idx++
+	for client, member := range ch.Member {
+		msg.Members = append(msg.Members, member.Serialize(ch, client))
 	}
 	return msg
+}
+
+func (ch *Channel) ApplyModeDelta(delta ChannelModeDelta, memberDelta []MemberModeDelta) (ChannelModeDelta, []MemberModeDelta) {
+	outDelta := ChannelModeDelta{}
+	outMember := make([]MemberModeDelta, 0)
+	if delta.Moderated == MODE_ADDED && !ch.Mode.Moderated {
+		ch.Mode.Moderated = true
+		outDelta.Moderated = MODE_ADDED
+	} else if delta.Moderated == MODE_REMOVED && ch.Mode.Moderated {
+		ch.Mode.Moderated = false
+		outDelta.Moderated = MODE_REMOVED
+	}
+	if delta.NoExternalMessages == MODE_ADDED && !ch.Mode.NoExternalMessages {
+		ch.Mode.NoExternalMessages = true
+		outDelta.Moderated = MODE_ADDED
+	} else if delta.NoExternalMessages == MODE_REMOVED && ch.Mode.NoExternalMessages {
+		ch.Mode.NoExternalMessages = false
+		outDelta.Moderated = MODE_REMOVED
+	}
+	if delta.Secret == MODE_ADDED && !ch.Mode.Secret {
+		ch.Mode.Secret = true
+		outDelta.Secret = MODE_ADDED
+	} else if delta.Secret == MODE_REMOVED && ch.Mode.Secret {
+		ch.Mode.Secret = false
+		outDelta.Secret = MODE_REMOVED
+	}
+	if delta.TopicProtected == MODE_ADDED && !ch.Mode.TopicProtected {
+		ch.Mode.TopicProtected = true
+		outDelta.TopicProtected = MODE_ADDED
+	} else if delta.TopicProtected == MODE_REMOVED && ch.Mode.TopicProtected {
+		ch.Mode.TopicProtected = false
+		outDelta.TopicProtected = MODE_REMOVED
+	}
+	for _, member := range memberDelta {
+		membership, found := ch.Member[member.Client]
+		outMemberDelta := MemberModeDelta{
+			Client: member.Client,
+		}
+		if !found {
+			// TODO: fix this.
+			continue
+		}
+		if member.IsOwner == MODE_ADDED && !membership.IsOwner {
+			membership.IsOwner = true
+			outMemberDelta.IsOwner = MODE_ADDED
+		} else if member.IsOwner == MODE_REMOVED && membership.IsOwner {
+			membership.IsOwner = false
+			outMemberDelta.IsOwner = MODE_REMOVED
+		}
+		if member.IsAdmin == MODE_ADDED && !membership.IsAdmin {
+			membership.IsAdmin = true
+			outMemberDelta.IsAdmin = MODE_ADDED
+		} else if member.IsAdmin == MODE_REMOVED && membership.IsAdmin {
+			membership.IsAdmin = false
+			outMemberDelta.IsAdmin = MODE_REMOVED
+		}
+		if member.IsOp == MODE_ADDED && !membership.IsOp {
+			membership.IsOp = true
+			outMemberDelta.IsOp = MODE_ADDED
+		} else if member.IsOp == MODE_REMOVED && membership.IsOp {
+			membership.IsOp = false
+			outMemberDelta.IsOp = MODE_REMOVED
+		}
+		if member.IsHalfop == MODE_ADDED && !membership.IsHalfop {
+			membership.IsHalfop = true
+			outMemberDelta.IsHalfop = MODE_ADDED
+		} else if member.IsHalfop == MODE_REMOVED && membership.IsHalfop {
+			membership.IsHalfop = false
+			outMemberDelta.IsHalfop = MODE_REMOVED
+		}
+		if member.IsVoice == MODE_ADDED && !membership.IsVoice {
+			membership.IsVoice = true
+			outMemberDelta.IsVoice = MODE_ADDED
+		} else if member.IsVoice == MODE_REMOVED && membership.IsVoice {
+			membership.IsVoice = false
+			outMemberDelta.IsVoice = MODE_REMOVED
+		}
+
+		if false ||
+			outMemberDelta.IsOwner != MODE_UNCHANGED ||
+			outMemberDelta.IsAdmin != MODE_UNCHANGED ||
+			outMemberDelta.IsOp != MODE_UNCHANGED ||
+			outMemberDelta.IsHalfop != MODE_UNCHANGED ||
+			outMemberDelta.IsVoice != MODE_UNCHANGED {
+			outMember = append(outMember, outMemberDelta)
+		}
+	}
+	return outDelta, outMember
 }
 
 type ChannelModeDelta struct {
@@ -75,6 +172,18 @@ type ChannelModeDelta struct {
 	Limit, Key                                            ModeDelta
 	LimitValue                                            uint32
 	KeyValue                                              string
+}
+
+func (cmd *ChannelModeDelta) IsEmpty() bool {
+	return true &&
+		cmd.Moderated == MODE_UNCHANGED &&
+		cmd.NoExternalMessages == MODE_UNCHANGED &&
+		cmd.Secret == MODE_UNCHANGED &&
+		cmd.TopicProtected == MODE_UNCHANGED
+}
+
+func (cmd *ChannelModeDelta) String() string {
+	return fmt.Sprintf("m=%s, n=%s, s=%s, t=%s", cmd.Moderated.String(), cmd.NoExternalMessages.String(), cmd.Secret.String(), cmd.TopicProtected.String())
 }
 
 type Membership struct {
@@ -96,5 +205,6 @@ func (m *Membership) Serialize(channel *Channel, client *Client) *SSMembership {
 }
 
 type MemberModeDelta struct {
+	Client                                    *Client
 	IsOwner, IsAdmin, IsOp, IsHalfop, IsVoice ModeDelta
 }

@@ -168,7 +168,7 @@ func (n *Node) handleChannel(msg *SSChannel, from *Server) {
 
 	// Notify mode changes, if any.
 	if len(deltas) > 0 {
-		n.Handler.OnChannelModeChange(channel, nil, deltas)
+		n.Handler.OnChannelModeChange(channel, nil, ChannelModeDelta{}, deltas)
 	}
 }
 
