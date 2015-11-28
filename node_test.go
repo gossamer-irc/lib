@@ -1,19 +1,22 @@
 package lib
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
 
 func TestNodeLevelLink(t *testing.T) {
-	tn, hubA := newTestNetwork("hub.a")
-	defer tn.Shutdown()
+	wg := &sync.WaitGroup{}
+	tn, hubA := newTestNetwork("hub.a", wg)
 	tn.LinkNewServer("hub.b", hubA)
+	tn.Shutdown()
+	wg.Wait()
 }
 
 func TestAttachSingle(t *testing.T) {
-	tn, hubA := newTestNetwork("hub.a")
-	defer tn.Shutdown()
+	wg := &sync.WaitGroup{}
+	tn, hubA := newTestNetwork("hub.a", wg)
 
 	c := &Client{
 		Nick:   "TestUser",
@@ -31,11 +34,14 @@ func TestAttachSingle(t *testing.T) {
 	if user != c {
 		t.Errorf("Wrong user: %s", user.DebugString())
 	}
+
+	tn.Shutdown()
+	wg.Wait()
 }
 
 func TestAttachDeepNetwork(t *testing.T) {
-	tn, hubA := newTestNetwork("hub.a")
-	defer tn.Shutdown()
+	wg := &sync.WaitGroup{}
+	tn, hubA := newTestNetwork("hub.a", wg)
 
 	hubB := tn.LinkNewServer("hub.b", hubA)
 	hubC := tn.LinkNewServer("hub.c", hubB)
@@ -58,11 +64,14 @@ func TestAttachDeepNetwork(t *testing.T) {
 	if user.Nick != "TestUser" {
 		t.Errorf("Wrong user: %s", user.DebugString())
 	}
+
+	tn.Shutdown()
+	wg.Wait()
 }
 
 func TestNickCollisionDuringLink(t *testing.T) {
-	tn, hubA := newTestNetwork("hub.a")
-	defer tn.Shutdown()
+	wg := &sync.WaitGroup{}
+	tn, hubA := newTestNetwork("hub.a", wg)
 
 	hubB := tn.NewServer("hub.b")
 
@@ -148,18 +157,19 @@ func TestNickCollisionDuringLink(t *testing.T) {
 	if !found || client.Server.Name != "hub.b" {
 		t.Errorf("testuser3 on hub.b not found or on wrong server.")
 	}
+	tn.Shutdown()
+	wg.Wait()
 }
 
 func TestNodeSplitBasic(t *testing.T) {
-	tnA, hubA := newTestNetwork("hub.a")
-	defer tnA.Shutdown()
+	wg := &sync.WaitGroup{}
+	tnA, hubA := newTestNetwork("hub.a", wg)
 
 	hubB := tnA.NewServer("hub.b")
 	tnA.Link(hubB, hubA)
 	tnA.Sync()
 
 	tnB := tnA.SplitFromRoot(hubB)
-	defer tnB.Shutdown()
 
 	tnA.Sync()
 
@@ -179,11 +189,14 @@ func TestNodeSplitBasic(t *testing.T) {
 	if found {
 		t.Errorf("hub.a found still linked on hub.b, should not be.")
 	}
+	tnA.Shutdown()
+	tnB.Shutdown()
+	wg.Wait()
 }
 
 func TestNodeSplitMidChain(t *testing.T) {
-	tnA, hubA := newTestNetwork("hub.a")
-	defer tnA.Shutdown()
+	wg := &sync.WaitGroup{}
+	tnA, hubA := newTestNetwork("hub.a", wg)
 
 	hubB := tnA.NewServer("hub.b")
 	hubC := tnA.NewServer("hub.c")
@@ -197,7 +210,6 @@ func TestNodeSplitMidChain(t *testing.T) {
 	tnA.Sync()
 
 	tnB := tnA.SplitFromRoot(hubC)
-	defer tnB.Shutdown()
 
 	_, found := hubA.Network["hub.c"]
 	if found {
@@ -211,9 +223,14 @@ func TestNodeSplitMidChain(t *testing.T) {
 	if found {
 		t.Errorf("hub.e found still referenced on hub.a, should not be.")
 	}
+
+	tnA.Shutdown()
+	tnB.Shutdown()
+	wg.Wait()
 }
 
 func TestNodeSplitMoveServer(t *testing.T) {
+	wg := &sync.WaitGroup{}
 	// Structure we expect to see initially.
 	// hub.a
 	//   hub.b
@@ -246,8 +263,7 @@ func TestNodeSplitMoveServer(t *testing.T) {
 	afterLink.AddServer("hub.c", "hub.b")
 	afterLink.AddServer("hub.e", "hub.a")
 
-	tn, hubA := newTestNetwork("hub.a")
-	defer tn.Shutdown()
+	tn, hubA := newTestNetwork("hub.a", wg)
 	hubB := tn.NewServer("hub.b")
 	hubC := tn.NewServer("hub.c")
 	hubD := tn.NewServer("hub.d")
@@ -284,4 +300,8 @@ func TestNodeSplitMoveServer(t *testing.T) {
 	afterLink.Validate(hubE, t)
 
 	tn.Sync()
+
+	tn.Shutdown()
+	tn2.Shutdown()
+	wg.Wait()
 }

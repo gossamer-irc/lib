@@ -39,18 +39,18 @@ func TestParseMode_ModeArg(t *testing.T) {
 	}
 }
 
-func TestSerializeModes_Simple(t *testing.T) {
+func TestStringifyModes_Simple(t *testing.T) {
 	channel := ChannelModeDelta{
 		TopicProtected: MODE_ADDED,
 		Moderated:      MODE_ADDED,
 	}
-	modeStr := SerializeChannelModes(channel, []MemberModeDelta{}, nil)
+	modeStr := StringifyChannelModes(channel, []MemberModeDelta{}, nil)
 	if modeStr != "+mt" {
 		t.Errorf("Expected '+mt', got '%s'", modeStr)
 	}
 }
 
-func TestSerializeModes_Negative(t *testing.T) {
+func TestStringifyModes_Negative(t *testing.T) {
 	channel := ChannelModeDelta{
 		TopicProtected: MODE_REMOVED,
 		Moderated:      MODE_ADDED,
@@ -60,7 +60,7 @@ func TestSerializeModes_Negative(t *testing.T) {
 		IsOwner: MODE_ADDED,
 		IsOp:    MODE_REMOVED,
 	}
-	modeStr := SerializeChannelModes(channel, []MemberModeDelta{delta}, func(client *Client) string {
+	modeStr := StringifyChannelModes(channel, []MemberModeDelta{delta}, func(client *Client) string {
 		if client != delta.Client {
 			t.Error("Expected known client, got unknown")
 			return "unknown"

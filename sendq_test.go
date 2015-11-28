@@ -4,27 +4,31 @@ import (
 	"bufio"
 	"errors"
 	"io"
+	"sync"
 	"testing"
 )
 
 // Tests that a SendQ can be initialized and shutdown properly.
 func TestSendQStartupShutdown(t *testing.T) {
+	wg := &sync.WaitGroup{}
 	r, w := io.Pipe()
-	sq := NewSendQ(w, 100)
+	sq := NewSendQ(w, 100, wg)
 	sq.Close()
 	b := make([]byte, 10)
 	n, err := r.Read(b)
 	if n != 0 || err != io.EOF {
 		t.Fatalf("Expected EOF, got %s", err)
 	}
+	wg.Wait()
 }
 
 // Tests that a SendQ buffers sent values and sends them through properly.
 func TestSendQBasicSend(t *testing.T) {
+	wg := &sync.WaitGroup{}
 	r, w := io.Pipe()
 	bufR := bufio.NewReader(r)
 
-	sq := NewSendQ(w, 100)
+	sq := NewSendQ(w, 100, wg)
 	sq.Write([]byte("hello "))
 	sq.Write([]byte("world"))
 	sq.FlushAndClose()
@@ -35,14 +39,16 @@ func TestSendQBasicSend(t *testing.T) {
 	if err != io.EOF {
 		t.Errorf("Expected EOF, got %s", err)
 	}
+	wg.Wait()
 }
 
 // Tests that a SendQ reports overflow errors properly.
 func TestSendQBufferOverflow(t *testing.T) {
+	wg := &sync.WaitGroup{}
 	r, w := io.Pipe()
 	bufR := bufio.NewReader(r)
 
-	sq := NewSendQ(w, 10)
+	sq := NewSendQ(w, 10, wg)
 	sq.Write([]byte("hello "))
 	sq.Write([]byte("world"))
 	_, err := bufR.ReadString('\n')
@@ -56,12 +62,14 @@ func TestSendQBufferOverflow(t *testing.T) {
 	if unknown, done := <-sq.ErrChan(); done {
 		t.Errorf("Expected error channel to close, but it didn't. Instead, got '%s'", unknown)
 	}
+	wg.Wait()
 }
 
 // Tests that a SendQ passes errors through with proper context.
 func TestSendQErrorPropagation(t *testing.T) {
+	wg := &sync.WaitGroup{}
 	r, w := io.Pipe()
-	sq := NewSendQ(w, 100)
+	sq := NewSendQ(w, 100, wg)
 	expected := errors.New("test")
 	r.CloseWithError(expected)
 	sq.Write([]byte("this should fail"))
@@ -72,4 +80,5 @@ func TestSendQErrorPropagation(t *testing.T) {
 	if unknown, done := <-sq.ErrChan(); done {
 		t.Errorf("Expected error channel to close, but it didn't. Instead, got '%s'", unknown)
 	}
+	wg.Wait()
 }

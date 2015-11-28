@@ -14,6 +14,10 @@ var SendQFull error = errors.New("SendQFull")
 // errors are fatal - the queue shuts down and becomes a noop after an error
 // is encountered.
 type SendQ struct {
+	// Lock guarding the entire SendQ. Needed for access to the buffer or
+	// to shutdown the queue.
+	mutex sync.Mutex
+
 	// Underlying io.WriteCloser to which writes will be buffered.
 	writer io.WriteCloser
 
@@ -23,10 +27,6 @@ type SendQ struct {
 	// Whether to shutdown sending and close the writer after the buffer
 	// is flushed (emptied).
 	flushAndClose bool
-
-	// Lock guarding the entire SendQ. Needed for access to the buffer or
-	// to shutdown the queue.
-	mutex sync.Mutex
 
 	// The actual byte buffer.
 	buf []byte
@@ -44,7 +44,7 @@ type SendQ struct {
 	name string
 }
 
-func NewSendQ(writer io.WriteCloser, n int) *SendQ {
+func NewSendQ(writer io.WriteCloser, n int, wg *sync.WaitGroup) *SendQ {
 	sq := &SendQ{
 		writer: writer,
 		pos:    0,
@@ -54,7 +54,8 @@ func NewSendQ(writer io.WriteCloser, n int) *SendQ {
 		name:   "sq:unnamed",
 	}
 	sq.dataAvailable = sync.NewCond(&sq.mutex)
-	go sq.loop()
+	wg.Add(1)
+	go sq.loop(wg)
 	return sq
 }
 
@@ -104,6 +105,7 @@ func (sq *SendQ) Close() {
 
 	// Shutdown the sending loop.
 	sq.shutdown = true
+	sq.dataAvailable.Signal()
 
 	// And close the underlying io.WriteCloser. Could be called simultaneously
 	// with Write() which may return with an error. This error will be ignored.
@@ -136,7 +138,8 @@ func (sq *SendQ) ErrChan() <-chan error {
 
 // Main sending loop (run asynchronously). Waits for data to be available in
 // the buffer and sends it to the writer. Exits whenever shutdown is set.
-func (sq *SendQ) loop() {
+func (sq *SendQ) loop(wg *sync.WaitGroup) {
+	defer wg.Done()
 	sq.mutex.Lock()
 	for {
 		// Lock is held at the start of a loop iteration.

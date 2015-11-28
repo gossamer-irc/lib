@@ -3,6 +3,7 @@ package lib
 import (
 	"fmt"
 	"io"
+	"sync"
 )
 
 // Represents a link between a local and a directly connected remote node.
@@ -17,23 +18,27 @@ type Link struct {
 	trans chan LinkMessage
 	exit  chan bool
 
+	// Ensures the link can only be closed once.
+	closed bool
+
 	Silence bool
 }
 
-func NewLink(reader io.ReadCloser, writer io.WriteCloser, sendBufferSize int, protoFactory ServerProtocolFactory, recv chan<- LinkMessage) *Link {
+func NewLink(reader io.ReadCloser, writer io.WriteCloser, sendBufferSize int, protoFactory ServerProtocolFactory, recv chan<- LinkMessage, wg *sync.WaitGroup) *Link {
 	l := &Link{
 		name:      "unnamed",
 		readChan:  reader,
 		writeChan: writer,
 		recv:      recv,
-		trans:     make(chan LinkMessage),
+		trans:     make(chan LinkMessage, 1),
 		exit:      make(chan bool, 1),
 	}
-	l.sq = NewSendQ(writer, sendBufferSize)
+	l.sq = NewSendQ(writer, sendBufferSize, wg)
 	l.reader = protoFactory.Reader(reader)
 	l.writer = protoFactory.Writer(l.sq)
-	go l.readLoop()
-	go l.controlLoop()
+	wg.Add(2)
+	go l.readLoop(wg)
+	go l.controlLoop(wg)
 	return l
 }
 
@@ -47,46 +52,54 @@ func (l *Link) WriteMessage(msg SSMessage) error {
 }
 
 func (l *Link) Close() {
-	close(l.exit)
+	l.readChan.Close()
+	if !l.closed {
+		l.closed = true
+		close(l.exit)
+	}
 	l.sq.Close()
 }
 
 func (l *Link) Shutdown() {
-	close(l.exit)
+	l.readChan.Close()
+	if !l.closed {
+		l.closed = true
+		close(l.exit)
+	}
 	l.sq.FlushAndClose()
 }
 
-func (l *Link) controlLoop() {
+func (l *Link) controlLoop(wg *sync.WaitGroup) {
+	defer wg.Done()
 	for {
 		select {
-		case cleanExit := <-l.exit:
-			if cleanExit {
-				l.sq.FlushAndClose()
-			} else {
-				l.sq.Close()
+		case <-l.exit:
+			trans := l.trans
+			if trans != nil {
+				for _ = range trans {
+				}
 			}
-			for _ = range l.trans {
-			}
+			close(l.recv)
 			return
 		case msg := <-l.trans:
 			l.recv <- msg
-			break
 		case sqErr := <-l.sq.ErrChan():
 			if sqErr != nil {
 				l.recv <- LinkMessage{l, nil, sqErr}
 			}
-			break
 		}
 	}
 }
 
-func (l *Link) readLoop() {
+func (l *Link) readLoop(wg *sync.WaitGroup) {
+	defer wg.Done()
 	for {
 		// Look for an exit signal. Nothing will actually be received,
 		// but the channel can be closed.
 		select {
 		case <-l.exit:
 			close(l.trans)
+			l.trans = nil
 			return
 		default:
 			// Attempt to read.
@@ -94,6 +107,8 @@ func (l *Link) readLoop() {
 			l.trans <- LinkMessage{l, msg, err}
 			// Don't attempt to read anymore.
 			if err != nil {
+				close(l.trans)
+				l.trans = nil
 				return
 			}
 		}

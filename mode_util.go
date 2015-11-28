@@ -70,7 +70,7 @@ func ParseChannelModeString(modes string, args []string, resolveClient ResolveCl
 	return
 }
 
-func SerializeChannelModes(channel ChannelModeDelta, member []MemberModeDelta, serializeClient SerializeClientFn) string {
+func StringifyChannelModes(channel ChannelModeDelta, member []MemberModeDelta, serializeClient SerializeClientFn) string {
 	modes := make([]rune, 0)
 	args := make([]string, 1, 1)
 	lastOp := MODE_UNCHANGED
@@ -139,6 +139,19 @@ func SerializeChannelModes(channel ChannelModeDelta, member []MemberModeDelta, s
 
 	args[0] = string(modes)
 	return strings.Join(args, " ")
+}
+
+func SerializeChannelModeChange(channel *Channel, actor *Client, channelMode ChannelModeDelta, memberDelta []MemberModeDelta) *SSChannelMode {
+	ssMemberDelta := make([]SSMemberModeDelta, len(memberDelta))
+	for idx, delta := range memberDelta {
+		ssMemberDelta[idx] = SSMemberModeDeltaFromMemberModeDelta(delta)
+	}
+	return &SSChannelMode{
+		Channel:    channel.Id(),
+		From:       actor.Id(),
+		Mode:       ChannelModeDeltaToSSChannelModeDelta(channelMode),
+		MemberMode: ssMemberDelta,
+	}
 }
 
 func FilterChannelModes(channel *Channel, actor *Client, channelMode ChannelModeDelta, memberDelta []MemberModeDelta) (ChannelModeDelta, []MemberModeDelta) {

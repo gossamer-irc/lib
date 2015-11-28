@@ -8,7 +8,15 @@ import (
 
 func (n *Node) BeginLink(reader io.ReadCloser, writer io.WriteCloser, logger io.Writer) {
 	// Set up the link itself.
-	link := NewLink(reader, writer, 1024000, GobServerProtocolFactory, n.linkRecv)
+	ch := make(chan LinkMessage)
+	n.linkReadWg.Add(1)
+	go func() {
+		defer n.linkReadWg.Done()
+		for msg := range ch {
+			n.linkRecv <- msg
+		}
+	}()
+	link := NewLink(reader, writer, 1024000, GobServerProtocolFactory, ch, n.wg)
 	n.NewLinks[link] = newLink{link, logger}
 
 	// Say hello.
@@ -69,6 +77,7 @@ func (n *Node) ChannelMessage(client *Client, channel *Channel, message string) 
 
 func (n *Node) ChangeChannelMode(client *Client, channel *Channel, channelModes ChannelModeDelta, memberModes []MemberModeDelta) {
 	channelModes, memberModes = FilterChannelModes(channel, client, channelModes, memberModes)
+	n.SendAll(SerializeChannelModeChange(channel, client, channelModes, memberModes))
 	appliedDelta, appliedMembers := channel.ApplyModeDelta(channelModes, memberModes)
 	if !appliedDelta.IsEmpty() || len(appliedMembers) > 0 {
 		n.Handler.OnChannelModeChange(channel, client, appliedDelta, appliedMembers)

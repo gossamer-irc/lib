@@ -4,6 +4,7 @@ import (
 	"io"
 	"log"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -46,9 +47,12 @@ type Node struct {
 	DefaultSubnet *Subnet
 	Me            *Server
 	Handler       EventHandler
+
+	wg         *sync.WaitGroup
+	linkReadWg *sync.WaitGroup
 }
 
-func NewNode(config Config, handler EventHandler) *Node {
+func NewNode(config Config, handler EventHandler, wg *sync.WaitGroup) *Node {
 	validateConfig(config)
 
 	node := &Node{
@@ -67,18 +71,32 @@ func NewNode(config Config, handler EventHandler) *Node {
 		Me:            NewLocalServer(config.ServerName, config.ServerDesc, nil, nil),
 
 		// ProxyEventHandler wrapper deals with nil handlers (which are allowed).
-		Handler: &ProxyEventHandler{handler},
+		Handler:    &ProxyEventHandler{handler},
+		wg:         wg,
+		linkReadWg: &sync.WaitGroup{},
 	}
 	node.Network[node.Me.Name] = node.Me
 	node.Subnet[node.DefaultSubnet.Name] = node.DefaultSubnet
+	wg.Add(1)
+	node.linkReadWg.Add(1)
 	go node.run()
+	go node.linkReadClose()
 	return node
 }
 
+func (n *Node) linkReadClose() {
+	n.linkReadWg.Wait()
+	close(n.linkRecv)
+}
+
 func (n *Node) run() {
+	defer n.wg.Done()
 	for {
 		select {
 		case <-n.exit:
+			n.linkReadWg.Done()
+			for _ = range n.linkRecv {
+			}
 			return
 		case msg := <-n.linkRecv:
 			if msg.link == nil {

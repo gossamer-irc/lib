@@ -22,12 +22,15 @@ const (
 	SS_MSG_TYPE_CHANNEL
 	SS_MSG_TYPE_MEMBERSHIP
 	SS_MSG_TYPE_PM
+	SS_MSG_TYPE_CHANNEL_MODE
 )
 
+type SSKillReason uint8
+
 const (
-	SS_KILL_REASON_COLLISION = iota
-	SS_KILL_REASON_SENDQ     = iota
-	SS_KILL_REASON_RECVQ     = iota
+	SS_KILL_REASON_COLLISION SSKillReason = iota
+	SS_KILL_REASON_SENDQ
+	SS_KILL_REASON_RECVQ
 )
 
 type ssMessageConstructor func() SSMessage
@@ -65,6 +68,9 @@ func init() {
 	}
 	constructorMap[SS_MSG_TYPE_PM] = func() SSMessage {
 		return &SSPrivateMessage{}
+	}
+	constructorMap[SS_MSG_TYPE_CHANNEL_MODE] = func() SSMessage {
+		return &SSChannelMode{}
 	}
 }
 
@@ -178,7 +184,7 @@ type SSKill struct {
 	Reason string
 
 	// Numerical code indicating the reason for the kill (for statistics, etc).
-	ReasonCode uint32
+	ReasonCode SSKillReason
 }
 
 func (msg SSKill) String() string {
@@ -268,6 +274,119 @@ func (msg SSPrivateMessage) messageType() uint32 {
 
 func (msg SSPrivateMessage) String() string {
 	return fmt.Sprintf("msg(%s -> %s, %s)", msg.From, msg.To, msg.Message)
+}
+
+type SSModeDelta uint8
+
+const (
+	SS_MODE_UNCHANGED SSModeDelta = iota
+	SS_MODE_ADDED
+	SS_MODE_REMOVED
+)
+
+func SSModeDeltaFromModeDelta(value ModeDelta) SSModeDelta {
+	switch value {
+	case MODE_UNCHANGED:
+		return SS_MODE_UNCHANGED
+	case MODE_ADDED:
+		return SS_MODE_ADDED
+	case MODE_REMOVED:
+		return SS_MODE_REMOVED
+	default:
+		panic("Unknown ModeDelta")
+	}
+}
+
+func (value SSModeDelta) ToModeDelta() ModeDelta {
+	switch value {
+	case SS_MODE_UNCHANGED:
+		return MODE_UNCHANGED
+	case SS_MODE_ADDED:
+		return MODE_ADDED
+	case SS_MODE_REMOVED:
+		return MODE_REMOVED
+	default:
+		panic("Unknown SSModeDelta")
+	}
+}
+
+type SSMemberModeDelta struct {
+	Client                                    SSClientId
+	IsOwner, IsAdmin, IsOp, IsHalfop, IsVoice SSModeDelta
+}
+
+func SSMemberModeDeltaFromMemberModeDelta(value MemberModeDelta) SSMemberModeDelta {
+	return SSMemberModeDelta{
+		Client:   value.Client.Id(),
+		IsOwner:  SSModeDeltaFromModeDelta(value.IsOwner),
+		IsAdmin:  SSModeDeltaFromModeDelta(value.IsAdmin),
+		IsOp:     SSModeDeltaFromModeDelta(value.IsOp),
+		IsHalfop: SSModeDeltaFromModeDelta(value.IsHalfop),
+		IsVoice:  SSModeDeltaFromModeDelta(value.IsVoice),
+	}
+}
+
+func (delta SSMemberModeDelta) ToMemberModeDelta(n *Node) (MemberModeDelta, bool) {
+	client, found := n.lookupClientById(delta.Client)
+	if !found {
+		return MemberModeDelta{}, false
+	}
+	return MemberModeDelta{
+		Client:   client,
+		IsOwner:  delta.IsOwner.ToModeDelta(),
+		IsAdmin:  delta.IsAdmin.ToModeDelta(),
+		IsOp:     delta.IsOp.ToModeDelta(),
+		IsHalfop: delta.IsHalfop.ToModeDelta(),
+		IsVoice:  delta.IsVoice.ToModeDelta(),
+	}, true
+}
+
+type SSChannelModeDelta struct {
+	TopicProtected, NoExternalMessages, Moderated, Secret SSModeDelta
+	Limit, Key                                            SSModeDelta
+	LimitValue                                            uint32
+	KeyValue                                              string
+}
+
+func ChannelModeDeltaToSSChannelModeDelta(value ChannelModeDelta) SSChannelModeDelta {
+	return SSChannelModeDelta{
+		Key:                SSModeDeltaFromModeDelta(value.Key),
+		Limit:              SSModeDeltaFromModeDelta(value.Limit),
+		Moderated:          SSModeDeltaFromModeDelta(value.Moderated),
+		NoExternalMessages: SSModeDeltaFromModeDelta(value.NoExternalMessages),
+		Secret:             SSModeDeltaFromModeDelta(value.Secret),
+		TopicProtected:     SSModeDeltaFromModeDelta(value.TopicProtected),
+		KeyValue:           value.KeyValue,
+		LimitValue:         value.LimitValue,
+	}
+}
+
+func (delta SSChannelModeDelta) ToChannelModeDelta() ChannelModeDelta {
+	return ChannelModeDelta{
+		Key:                delta.Key.ToModeDelta(),
+		Limit:              delta.Limit.ToModeDelta(),
+		Moderated:          delta.Moderated.ToModeDelta(),
+		NoExternalMessages: delta.NoExternalMessages.ToModeDelta(),
+		Secret:             delta.Secret.ToModeDelta(),
+		TopicProtected:     delta.TopicProtected.ToModeDelta(),
+		KeyValue:           delta.KeyValue,
+		LimitValue:         delta.LimitValue,
+	}
+}
+
+type SSChannelMode struct {
+	From       SSClientId
+	Channel    SSChannelId
+	Mode       SSChannelModeDelta
+	MemberMode []SSMemberModeDelta
+}
+
+func (msg SSChannelMode) messageType() uint32 {
+	return SS_MSG_TYPE_CHANNEL_MODE
+}
+
+func (msg SSChannelMode) String() string {
+	return fmt.Sprintf("mode(%s, %s)", msg.Channel, msg.From)
 }
 
 // TODO Why does SSClientId have Server?

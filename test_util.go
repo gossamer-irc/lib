@@ -3,26 +3,29 @@ package lib
 import (
 	"io"
 	"log"
+	"sync"
 	"testing"
 )
 
 type testNetwork struct {
 	root *Node
 	all  map[string]*Node
+	wg   *sync.WaitGroup
 }
 
-func newTestNetwork(rootServerName string) (*testNetwork, *Node) {
-	root := NewNode(Config{rootServerName, "Test Server", "TestNet", "test"}, nil)
+func newTestNetwork(rootServerName string, wg *sync.WaitGroup) (*testNetwork, *Node) {
+	root := NewNode(Config{rootServerName, "Test Server", "TestNet", "test"}, nil, wg)
 	tn := &testNetwork{
 		root,
 		make(map[string]*Node),
+		wg,
 	}
 	tn.all[root.Me.Name] = root
 	return tn, root
 }
 
 func (tn *testNetwork) NewServer(name string) *Node {
-	return NewNode(Config{name, "Test Server", "TestNet", "test"}, nil)
+	return NewNode(Config{name, "Test Server", "TestNet", "test"}, nil, tn.wg)
 }
 
 func (tn *testNetwork) LinkNewServer(name string, to *Node) *Node {
@@ -92,6 +95,7 @@ func (tn *testNetwork) SplitFromRoot(node *Node) *testNetwork {
 	tnSplit := &testNetwork{
 		root: node,
 		all:  make(map[string]*Node),
+		wg:   tn.wg,
 	}
 
 	// Move all split servers from tn to tnSplit.
@@ -112,14 +116,18 @@ func (tn *testNetwork) setupVersionIncrementMonitor() chan struct{} {
 	count := len(tn.all)
 	for _, node := range tn.all {
 		node.versionMon = make(chan int)
+		tn.wg.Add(1)
 		go func(node *Node) {
+			defer tn.wg.Done()
 			<-node.versionMon
 			node.versionMon = nil
 			counter <- struct{}{}
 		}(node)
 	}
 
+	tn.wg.Add(1)
 	go func() {
+		defer tn.wg.Done()
 		recv := 0
 		for _ = range counter {
 			recv++
