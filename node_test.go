@@ -1,39 +1,27 @@
 package lib
 
 import (
+	"log"
 	"sync"
 	"testing"
-	"time"
+	//"time"
 )
 
 func TestNodeLevelLink(t *testing.T) {
 	wg := &sync.WaitGroup{}
-	tn, hubA := newTestNetwork("hub.a", wg)
-	tn.LinkNewServer("hub.b", hubA)
+	tn, hubA := newTestNetwork(t, "hub.a", wg)
+	hubA.NewLink("hub.b")
 	tn.Shutdown()
 	wg.Wait()
 }
 
 func TestAttachSingle(t *testing.T) {
 	wg := &sync.WaitGroup{}
-	tn, hubA := newTestNetwork("hub.a", wg)
+	tn, hubA := newTestNetwork(t, "hub.a", wg)
 
-	c := &Client{
-		Nick:   "TestUser",
-		Ident:  "test",
-		Host:   "testing.host",
-		Gecos:  "Testing Gecos",
-		Subnet: hubA.DefaultSubnet,
-	}
-	hubA.AttachClient(c)
+	test := hubA.NewClient("TestUser")
 
-	user, found := hubA.DefaultSubnet.Client["testuser"]
-	if !found {
-		t.Fatalf("Unable to find user in default subnet.")
-	}
-	if user != c {
-		t.Errorf("Wrong user: %s", user.DebugString())
-	}
+	tn.ExpectAll(test.Exists())
 
 	tn.Shutdown()
 	wg.Wait()
@@ -41,29 +29,14 @@ func TestAttachSingle(t *testing.T) {
 
 func TestAttachDeepNetwork(t *testing.T) {
 	wg := &sync.WaitGroup{}
-	tn, hubA := newTestNetwork("hub.a", wg)
+	tn, hubA := newTestNetwork(t, "hub.a", wg)
+	hubB := hubA.NewLink("hub.b")
+	hubC := hubB.NewLink("hub.c")
+	hubC.NewLink("hub.d")
 
-	hubB := tn.LinkNewServer("hub.b", hubA)
-	hubC := tn.LinkNewServer("hub.c", hubB)
-	hubD := tn.LinkNewServer("hub.d", hubC)
+	test := hubA.NewClient("TestUser")
 
-	hubA.AttachClient(&Client{
-		Nick:   "TestUser",
-		Ident:  "test",
-		Host:   "testing.host",
-		Gecos:  "Testing Gecos",
-		Subnet: hubA.DefaultSubnet,
-	})
-
-	tn.Sync()
-
-	user, found := hubD.DefaultSubnet.Client["testuser"]
-	if !found {
-		t.Fatalf("Unable to find user in default subnet of hub.d.")
-	}
-	if user.Nick != "TestUser" {
-		t.Errorf("Wrong user: %s", user.DebugString())
-	}
+	tn.ExpectAll(test.Exists())
 
 	tn.Shutdown()
 	wg.Wait()
@@ -71,124 +44,50 @@ func TestAttachDeepNetwork(t *testing.T) {
 
 func TestNickCollisionDuringLink(t *testing.T) {
 	wg := &sync.WaitGroup{}
-	tn, hubA := newTestNetwork("hub.a", wg)
+	tn, hubA := newTestNetwork(t, "hub.a", wg)
 
 	hubB := tn.NewServer("hub.b")
 
 	// Add 3 clients on A and the same 3 clients on B.
 	// The first has an older timestamp on A, the last on B, and the middle
 	// is tied.
-	hubA.AttachClient(&Client{
-		Nick:   "TestUser1",
-		Ident:  "test",
-		Host:   "testing.host",
-		Gecos:  "On hub.a",
-		Subnet: hubA.DefaultSubnet,
-		Ts:     time.Unix(1, 0),
-	})
-	hubA.AttachClient(&Client{
-		Nick:   "TestUser2",
-		Ident:  "test",
-		Host:   "testing.host",
-		Gecos:  "On hub.a",
-		Subnet: hubA.DefaultSubnet,
-		Ts:     time.Unix(2, 0),
-	})
-	hubA.AttachClient(&Client{
-		Nick:   "TestUser3",
-		Ident:  "test",
-		Host:   "testing.host",
-		Gecos:  "On hub.a",
-		Subnet: hubA.DefaultSubnet,
-		Ts:     time.Unix(3, 0),
-	})
+	hubA.SetTS(1)
+	hubB.SetTS(3)
+	alphaA := hubA.NewClient("alpha")
+	alphaB := hubB.NewClient("alpha")
+	hubA.SetTS(2)
+	hubB.SetTS(2)
+	betaA := hubA.NewClient("beta")
+	betaB := hubB.NewClient("beta")
+	hubA.SetTS(3)
+	hubB.SetTS(1)
+	gammaA := hubA.NewClient("gamma")
+	gammaB := hubB.NewClient("gamma")
 
-	hubB.AttachClient(&Client{
-		Nick:   "TestUser1",
-		Ident:  "test",
-		Host:   "testing.host",
-		Gecos:  "On hub.b",
-		Subnet: hubB.DefaultSubnet,
-		Ts:     time.Unix(3, 0),
-	})
-	hubB.AttachClient(&Client{
-		Nick:   "TestUser2",
-		Ident:  "test",
-		Host:   "testing.host",
-		Gecos:  "On hub.b",
-		Subnet: hubB.DefaultSubnet,
-		Ts:     time.Unix(2, 0),
-	})
-	hubB.AttachClient(&Client{
-		Nick:   "TestUser3",
-		Ident:  "test",
-		Host:   "testing.host",
-		Gecos:  "On hub.b",
-		Subnet: hubB.DefaultSubnet,
-		Ts:     time.Unix(1, 0),
-	})
+	hubA.Link(hubB)
 
-	tn.Link(hubB, hubA)
-	tn.Sync()
+	tn.ExpectAll(alphaA.Exists())
+	tn.ExpectAll(alphaB.Exists().Not())
+	tn.ExpectAll(betaA.Exists().Not())
+	tn.ExpectAll(betaB.Exists().Not())
+	tn.ExpectAll(gammaA.Exists().Not())
+	tn.ExpectAll(gammaB.Exists())
 
-	client, found := hubA.DefaultSubnet.Client["testuser1"]
-	if !found || client.Server.Name != "hub.a" {
-		t.Errorf("testuser1 on hub.a not found or on wrong server.")
-	}
-	client, found = hubB.DefaultSubnet.Client["testuser1"]
-	if !found || client.Server.Name != "hub.a" {
-		t.Errorf("testuser1 on hub.b not found or on wrong server.")
-	}
-
-	_, found = hubA.DefaultSubnet.Client["testuser2"]
-	if found {
-		t.Errorf("testuser2 on hub.a found when it should have been killed.")
-	}
-	_, found = hubB.DefaultSubnet.Client["testuser2"]
-	if found {
-		t.Errorf("testuser2 on hub.b found when it should have been killed.")
-	}
-
-	client, found = hubA.DefaultSubnet.Client["testuser3"]
-	if !found || client.Server.Name != "hub.b" {
-		t.Errorf("testuser3 on hub.a not found or on wrong server.")
-	}
-	client, found = hubB.DefaultSubnet.Client["testuser3"]
-	if !found || client.Server.Name != "hub.b" {
-		t.Errorf("testuser3 on hub.b not found or on wrong server.")
-	}
 	tn.Shutdown()
 	wg.Wait()
 }
 
 func TestNodeSplitBasic(t *testing.T) {
 	wg := &sync.WaitGroup{}
-	tnA, hubA := newTestNetwork("hub.a", wg)
-
-	hubB := tnA.NewServer("hub.b")
-	tnA.Link(hubB, hubA)
-	tnA.Sync()
-
+	tnA, hubA := newTestNetwork(t, "hub.a", wg)
+	hubB := hubA.NewLink("hub.b")
 	tnB := tnA.SplitFromRoot(hubB)
 
-	tnA.Sync()
+	tnA.ExpectAll(hubB.IsLinked().Not())
+	tnA.ExpectAll(hubB.Exists().Not())
+	tnB.ExpectAll(hubA.IsLinked().Not())
+	tnB.ExpectAll(hubA.Exists().Not())
 
-	_, found := hubA.Network["hub.b"]
-	if found {
-		t.Errorf("hub.b found still referenced on hub.a, should not be.")
-	}
-	_, found = hubB.Network["hub.a"]
-	if found {
-		t.Errorf("hub.a found still referenced on hub.b, should not be.")
-	}
-	_, found = hubA.Me.Links["hub.b"]
-	if found {
-		t.Errorf("hub.b found still linked to hub.a, should not be.")
-	}
-	_, found = hubB.Me.Links["hub.a"]
-	if found {
-		t.Errorf("hub.a found still linked on hub.b, should not be.")
-	}
 	tnA.Shutdown()
 	tnB.Shutdown()
 	wg.Wait()
@@ -196,33 +95,27 @@ func TestNodeSplitBasic(t *testing.T) {
 
 func TestNodeSplitMidChain(t *testing.T) {
 	wg := &sync.WaitGroup{}
-	tnA, hubA := newTestNetwork("hub.a", wg)
+	tnA, hubA := newTestNetwork(t, "hub.a", wg)
 
-	hubB := tnA.NewServer("hub.b")
-	hubC := tnA.NewServer("hub.c")
-	hubD := tnA.NewServer("hub.d")
-	hubE := tnA.NewServer("hub.e")
-	tnA.Link(hubB, hubA)
-	tnA.Link(hubC, hubB)
-	tnA.Link(hubD, hubC)
-	tnA.Link(hubE, hubD)
-
-	tnA.Sync()
+	hubB := hubA.NewLink("hub.b")
+	hubC := hubB.NewLink("hub.c")
+	hubD := hubC.NewLink("hub.d")
+	hubE := hubD.NewLink("hub.e")
 
 	tnB := tnA.SplitFromRoot(hubC)
 
-	_, found := hubA.Network["hub.c"]
-	if found {
-		t.Errorf("hub.c found still referenced on hub.a, should not be.")
-	}
-	_, found = hubA.Network["hub.d"]
-	if found {
-		t.Errorf("hub.d found still referenced on hub.a, should not be.")
-	}
-	_, found = hubA.Network["hub.e"]
-	if found {
-		t.Errorf("hub.e found still referenced on hub.a, should not be.")
-	}
+	hubB.Expect(hubC.IsLinked().Not())
+	tnA.ExpectAll(hubC.Exists().Not())
+	tnA.ExpectAll(hubC.IsLinked().Not())
+	tnA.ExpectAll(hubD.Exists().Not())
+	tnA.ExpectAll(hubE.Exists().Not())
+
+	hubC.Expect(hubD.IsLinked())
+	hubC.Expect(hubB.IsLinked().Not())
+	tnB.ExpectAll(hubA.Exists().Not())
+	tnB.ExpectAll(hubB.Exists().Not())
+	tnB.ExpectAll(hubD.Exists())
+	tnB.ExpectAll(hubE.Exists())
 
 	tnA.Shutdown()
 	tnB.Shutdown()
@@ -263,43 +156,28 @@ func TestNodeSplitMoveServer(t *testing.T) {
 	afterLink.AddServer("hub.c", "hub.b")
 	afterLink.AddServer("hub.e", "hub.a")
 
-	tn, hubA := newTestNetwork("hub.a", wg)
-	hubB := tn.NewServer("hub.b")
-	hubC := tn.NewServer("hub.c")
-	hubD := tn.NewServer("hub.d")
-	hubE := tn.NewServer("hub.e")
-	tn.Link(hubB, hubA)
-	tn.Link(hubC, hubB)
-	tn.Link(hubD, hubA)
-	tn.Link(hubE, hubA)
-
-	tn.Sync()
+	tn, hubA := newTestNetwork(t, "hub.a", wg)
+	hubB := hubA.NewLink("hub.b")
+	hubB.NewLink("hub.c")
+	hubD := hubA.NewLink("hub.d")
+	hubA.NewLink("hub.e")
 
 	// Validate initial configuration.
-	initial.Validate(hubA, t)
-	initial.Validate(hubB, t)
-	initial.Validate(hubC, t)
-	initial.Validate(hubD, t)
-	initial.Validate(hubE, t)
+	tn.ExpectAll(initial)
 
 	tn2 := tn.SplitFromRoot(hubB)
-	tn.Sync()
-	tn2.Sync()
 
 	// Validate intermediate configuration.
-	afterSplit.Validate(hubA, t)
-	afterSplit.Validate(hubD, t)
-	afterSplit.Validate(hubE, t)
-	tn.Link(hubB, hubD)
+	tn.ExpectAll(afterSplit)
+
+	// Reconnect.
+
+	log.Printf("RELINK")
+	hubB.Link(hubD)
+	log.Printf("SYNC")
 	tn.SyncFrom(hubD)
 
-	afterLink.Validate(hubA, t)
-	afterLink.Validate(hubB, t)
-	afterLink.Validate(hubC, t)
-	afterLink.Validate(hubD, t)
-	afterLink.Validate(hubE, t)
-
-	tn.Sync()
+	tn.ExpectAll(afterLink)
 
 	tn.Shutdown()
 	tn2.Shutdown()

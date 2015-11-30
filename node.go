@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+type NodeDoFn func()
+
 // Configuration spec for this node.
 type Config struct {
 	// Basic server name and info.
@@ -50,6 +52,8 @@ type Node struct {
 
 	wg         *sync.WaitGroup
 	linkReadWg *sync.WaitGroup
+
+	todo chan NodeDoFn
 }
 
 func NewNode(config Config, handler EventHandler, wg *sync.WaitGroup) *Node {
@@ -74,6 +78,7 @@ func NewNode(config Config, handler EventHandler, wg *sync.WaitGroup) *Node {
 		Handler:    &ProxyEventHandler{handler},
 		wg:         wg,
 		linkReadWg: &sync.WaitGroup{},
+		todo:       make(chan NodeDoFn),
 	}
 	node.Network[node.Me.Name] = node.Me
 	node.Subnet[node.DefaultSubnet.Name] = node.DefaultSubnet
@@ -89,6 +94,10 @@ func (n *Node) linkReadClose() {
 	close(n.linkRecv)
 }
 
+func (n *Node) Do(fn NodeDoFn) {
+	n.todo <- fn
+}
+
 func (n *Node) run() {
 	defer n.wg.Done()
 	for {
@@ -98,6 +107,8 @@ func (n *Node) run() {
 			for _ = range n.linkRecv {
 			}
 			return
+		case todo := <-n.todo:
+			todo()
 		case msg := <-n.linkRecv:
 			if msg.link == nil {
 				log.Fatalf("[%s] Nil link?", n.Me.Name)
@@ -113,7 +124,7 @@ func (n *Node) run() {
 			} else {
 				server, found := n.Local[msg.link]
 				if !found {
-					log.Fatalf("[%s] Expected to find server for link {%s}: [%v].", n.Me.Name, msg.link.name, msg.err)
+					log.Fatalf("[%s] Expected to find server for link {%s/%v}: [%v].", n.Me.Name, msg.link.name, msg.link.Silence, msg.err)
 				}
 
 				if msg.err != nil {
@@ -149,9 +160,10 @@ func (n *Node) split(link *Link, err error) {
 		log.Fatalf("Got split() for link {%s} that doesn't exist for error: %v", link.name, err)
 	}
 
+	log.Printf("SPLIT: %s", link.name)
+	link.Silence = true
 	delete(n.Local, link)
 	link.Close()
-	link.Silence = true
 
 	// Next, break the link, and resolve the consequences.
 	n.processSplit(server, err.Error())
@@ -285,32 +297,43 @@ func (n *Node) SendAllSkip(msg SSMessage, skip *Server) {
 	}
 }
 
-func (n *Node) Sync() chan struct{} {
-	n.syncId++
-
+func (n *Node) sync(todo bool) chan struct{} {
 	sr := &syncRecord{
 		synced:  make(chan struct{}, 1),
 		servers: make(map[string]bool),
 	}
 
-	n.syncsActive[n.syncId] = sr
+	do := func() {
+		n.syncId++
 
-	for name, server := range n.Network {
-		if server != n.Me {
-			sr.servers[name] = false
+		n.syncsActive[n.syncId] = sr
+
+		for name, server := range n.Network {
+			if server != n.Me {
+				sr.servers[name] = false
+			}
+		}
+
+		n.SendAll(&SSSync{
+			Origin:   n.Me.Name,
+			Sequence: n.syncId,
+		})
+
+		if len(sr.servers) == 0 {
+			close(sr.synced)
 		}
 	}
-
-	n.SendAll(&SSSync{
-		Origin:   n.Me.Name,
-		Sequence: n.syncId,
-	})
-
-	if len(sr.servers) == 0 {
-		sr.synced <- struct{}{}
+	if todo {
+		n.todo <- do
+	} else {
+		do()
 	}
 
 	return sr.synced
+}
+
+func (n *Node) Sync() chan struct{} {
+	return n.sync(true)
 }
 
 func (n *Node) lookupClientById(id SSClientId) (client *Client, found bool) {
@@ -327,6 +350,15 @@ func (n *Node) lookupClientById(id SSClientId) (client *Client, found bool) {
 		client = nil
 		found = false
 	}
+	return
+}
+
+func (n *Node) lookupChannelById(id SSChannelId) (channel *Channel, found bool) {
+	sn, found := n.Subnet[id.Subnet]
+	if !found {
+		return
+	}
+	channel, found = sn.Channel[id.Name]
 	return
 }
 

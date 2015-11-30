@@ -2,6 +2,7 @@ package lib
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -50,6 +51,7 @@ func NewChannel(subnet *Subnet, name string) *Channel {
 	return &Channel{
 		Subnet:      subnet,
 		Name:        name,
+		Lname:       strings.ToLower(name),
 		LocalMember: make(map[*Client]*Membership),
 		Member:      make(map[*Client]*Membership),
 	}

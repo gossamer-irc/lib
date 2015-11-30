@@ -81,8 +81,12 @@ func (l *Link) controlLoop(wg *sync.WaitGroup) {
 			}
 			close(l.recv)
 			return
-		case msg := <-l.trans:
-			l.recv <- msg
+		case msg, ok := <-l.trans:
+			if !ok {
+				l.trans = nil
+			} else {
+				l.recv <- msg
+			}
 		case sqErr := <-l.sq.ErrChan():
 			if sqErr != nil {
 				l.recv <- LinkMessage{l, nil, sqErr}
@@ -99,7 +103,6 @@ func (l *Link) readLoop(wg *sync.WaitGroup) {
 		select {
 		case <-l.exit:
 			close(l.trans)
-			l.trans = nil
 			return
 		default:
 			// Attempt to read.
@@ -108,7 +111,6 @@ func (l *Link) readLoop(wg *sync.WaitGroup) {
 			// Don't attempt to read anymore.
 			if err != nil {
 				close(l.trans)
-				l.trans = nil
 				return
 			}
 		}

@@ -29,8 +29,16 @@ func (n *Node) handleLinkMessage(msg SSMessage, from *Server) {
 		n.handleKill(msg, from)
 	case *SSSplit:
 		n.handleSplit(msg, from)
+	case *SSChannel:
+		n.handleChannel(msg, from)
+	case *SSMembership:
+		n.handleMembership(msg, from)
 	case *SSPrivateMessage:
 		n.handlePrivateMessage(msg, from)
+	case *SSChannelMessage:
+		n.handleChannelMessage(msg, from)
+	case *SSChannelMode:
+		n.handleChannelMode(msg, from)
 	}
 }
 
@@ -43,6 +51,7 @@ func (n *Node) handleNewLinkMessage(msg LinkMessage, nl newLink) {
 	delete(n.NewLinks, msg.link)
 	_, haveServer := n.Network[hello.Name]
 	if haveServer {
+		log.Printf("[%s] Already have server: %s", n.Me.Name, hello.Name)
 		msg.link.Close()
 		return
 	}
@@ -64,16 +73,13 @@ func (n *Node) handleNewLinkMessage(msg LinkMessage, nl newLink) {
 
 func (n *Node) handleChannel(msg *SSChannel, from *Server) {
 	// Create a channel optimistically. It'll be thrown away if the channel exists locally.
-	channel := &Channel{
-		Name:  msg.Name,
-		Lname: strings.ToLower(msg.Name),
-		Ts:    msg.Ts,
-	}
 	subnet, found := n.Subnet[msg.Subnet]
 	if !found {
 		log.Fatalf("[%s] on channel message [%s] unknown subnet: %s", n.Me.Name, msg.String(), msg.Subnet)
 	}
-	channel.Subnet = subnet
+	// Create a channel optimistically. It'll be thrown away if the channel exists locally.
+	channel := NewChannel(subnet, msg.Name)
+	channel.Ts = msg.Ts
 
 	// Whether we trust remote and/or local modes is determined by the relative timestamps of the channels.
 	// Identical timestamps means these are the same channel that was split and is being rejoined, and both
@@ -92,6 +98,8 @@ func (n *Node) handleChannel(msg *SSChannel, from *Server) {
 			trustLocal = false
 		}
 		channel = existing
+	} else {
+		subnet.Channel[channel.Lname] = channel
 	}
 
 	// Keep a running list of member mode deltas to notify the handler later.
@@ -128,6 +136,7 @@ func (n *Node) handleChannel(msg *SSChannel, from *Server) {
 	}
 
 	// Process new members.
+	log.Printf("Processing new members...")
 	for _, memMsg := range msg.Members {
 		// Get the client by id. If it's not found, just ignore it.
 		client, found := n.lookupClientById(memMsg.Client)
@@ -138,7 +147,9 @@ func (n *Node) handleChannel(msg *SSChannel, from *Server) {
 			Ts: memMsg.Ts,
 		}
 		if trustRemote && (memMsg.IsOwner || memMsg.IsAdmin || memMsg.IsOp || memMsg.IsHalfop || memMsg.IsVoice) {
-			delta := MemberModeDelta{}
+			delta := MemberModeDelta{
+				Client: client,
+			}
 			if memMsg.IsOwner {
 				mship.IsOwner = true
 				delta.IsOwner = MODE_ADDED
@@ -173,6 +184,58 @@ func (n *Node) handleChannel(msg *SSChannel, from *Server) {
 }
 
 func (n *Node) handleMembership(msg *SSMembership, from *Server) {
+	client, found := n.lookupClientById(msg.Client)
+	if !found {
+		return
+	}
+
+	channel, found := n.lookupChannelById(msg.Channel)
+	if !found {
+		return
+	}
+
+	_, found = channel.Member[client]
+	if found {
+		return
+	}
+
+	mship := &Membership{
+		Ts: msg.Ts,
+	}
+
+	delta := MemberModeDelta{Client: client}
+	mode := false
+	if msg.IsOwner {
+		mship.IsOwner = true
+		delta.IsOwner = MODE_ADDED
+		mode = true
+	}
+	if msg.IsAdmin {
+		mship.IsAdmin = true
+		delta.IsAdmin = MODE_ADDED
+		mode = true
+	}
+	if msg.IsOp {
+		mship.IsOp = true
+		delta.IsOp = MODE_ADDED
+		mode = true
+	}
+	if msg.IsHalfop {
+		mship.IsHalfop = true
+		delta.IsHalfop = MODE_ADDED
+		mode = true
+	}
+	if msg.IsVoice {
+		mship.IsVoice = true
+		delta.IsVoice = MODE_ADDED
+		mode = true
+	}
+
+	channel.Member[client] = mship
+	n.Handler.OnChannelJoin(channel, client, mship)
+	if mode {
+		n.Handler.OnChannelModeChange(channel, nil, ChannelModeDelta{}, []MemberModeDelta{delta})
+	}
 	n.SendAllSkip(msg, from)
 }
 
@@ -367,4 +430,47 @@ func (n *Node) handlePrivateMessage(msg *SSPrivateMessage, from *Server) {
 		}
 		to.Server.Route.Send(msg)
 	}
+}
+
+func (n *Node) handleChannelMessage(msg *SSChannelMessage, from *Server) {
+	to, found := n.lookupChannelById(msg.To)
+	if !found {
+		log.Printf("CM to unknown channel: %s", msg.To)
+		return
+	}
+
+	fromClient, found := n.lookupClientById(msg.From)
+	if !found {
+		log.Printf("CM from unknown user: %s", msg.From)
+		return
+	}
+
+	n.Handler.OnChannelMessage(fromClient, to, msg.Message)
+	n.SendAllSkip(msg, from)
+}
+
+func (n *Node) handleChannelMode(msg *SSChannelMode, from *Server) {
+	target, found := n.lookupChannelById(msg.Channel)
+	if !found {
+		log.Printf("ChannelMode change on unknown channel: %s", msg.Channel)
+		return
+	}
+
+	actor, found := n.lookupClientById(msg.From)
+	if !found {
+		log.Printf("ChannelMode change from unknown client: %s", msg.From)
+	}
+
+	memberDeltas := make([]MemberModeDelta, 0, len(msg.MemberMode))
+	for _, delta := range msg.MemberMode {
+		memberDelta, ok := delta.ToMemberModeDelta(n)
+		if !ok {
+			continue
+		}
+		memberDeltas = append(memberDeltas, memberDelta)
+	}
+	appliedMode, appliedMember := target.ApplyModeDelta(msg.Mode.ToChannelModeDelta(), memberDeltas)
+
+	n.Handler.OnChannelModeChange(target, actor, appliedMode, appliedMember)
+	n.SendAllSkip(msg, from)
 }

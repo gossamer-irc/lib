@@ -2,11 +2,12 @@ package lib
 
 import (
 	"io"
+	"log"
 	"strings"
 	"time"
 )
 
-func (n *Node) BeginLink(reader io.ReadCloser, writer io.WriteCloser, logger io.Writer) {
+func (n *Node) BeginLink(reader io.ReadCloser, writer io.WriteCloser, logger io.Writer, name string) {
 	// Set up the link itself.
 	ch := make(chan LinkMessage)
 	n.linkReadWg.Add(1)
@@ -17,6 +18,8 @@ func (n *Node) BeginLink(reader io.ReadCloser, writer io.WriteCloser, logger io.
 		}
 	}()
 	link := NewLink(reader, writer, 1024000, GobServerProtocolFactory, ch, n.wg)
+	link.SetName(name)
+	log.Printf("[%s] New link: %s", n.Me.Name, name)
 	n.NewLinks[link] = newLink{link, logger}
 
 	// Say hello.
@@ -72,6 +75,11 @@ func (n *Node) JoinOrCreateChannel(client *Client, subnet *Subnet, name string) 
 }
 
 func (n *Node) ChannelMessage(client *Client, channel *Channel, message string) {
+	n.SendAll(&SSChannelMessage{
+		From:    client.Id(),
+		To:      channel.Id(),
+		Message: message,
+	})
 	n.Handler.OnChannelMessage(client, channel, message)
 }
 
