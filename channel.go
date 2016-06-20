@@ -26,6 +26,7 @@ const (
 )
 
 type Channel struct {
+	Node    *Node
 	Subnet  *Subnet
 	Name    string
 	Lname   string
@@ -47,8 +48,9 @@ type Channel struct {
 	}
 }
 
-func NewChannel(subnet *Subnet, name string) *Channel {
+func NewChannel(node *Node, subnet *Subnet, name string) *Channel {
 	return &Channel{
+		Node:        node,
 		Subnet:      subnet,
 		Name:        name,
 		Lname:       strings.ToLower(name),
@@ -114,12 +116,12 @@ func (ch *Channel) ApplyModeDelta(delta ChannelModeDelta, memberDelta []MemberMo
 	}
 	for _, member := range memberDelta {
 		membership, found := ch.Member[member.Client]
-		outMemberDelta := MemberModeDelta{
-			Client: member.Client,
-		}
 		if !found {
 			// TODO: fix this.
 			continue
+		}
+		outMemberDelta := MemberModeDelta{
+			Client: member.Client,
 		}
 		if member.IsOwner == MODE_ADDED && !membership.IsOwner {
 			membership.IsOwner = true

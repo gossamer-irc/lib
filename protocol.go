@@ -22,6 +22,7 @@ const (
 	SS_MSG_TYPE_CHANNEL
 	SS_MSG_TYPE_CHANNEL_MODE
 	SS_MSG_TYPE_MEMBERSHIP
+	SS_MSG_TYPE_MEMBERSHIP_END
 	SS_MSG_TYPE_PM
 	SS_MSG_TYPE_CM
 )
@@ -29,7 +30,8 @@ const (
 type SSKillReason uint8
 
 const (
-	SS_KILL_REASON_COLLISION SSKillReason = iota
+	SS_KILL_REASON_QUIT SSKillReason = iota
+	SS_KILL_REASON_COLLISION
 	SS_KILL_REASON_SENDQ
 	SS_KILL_REASON_RECVQ
 )
@@ -66,6 +68,9 @@ func init() {
 	}
 	constructorMap[SS_MSG_TYPE_MEMBERSHIP] = func() SSMessage {
 		return &SSMembership{}
+	}
+	constructorMap[SS_MSG_TYPE_MEMBERSHIP_END] = func() SSMessage {
+		return &SSMembershipEnd{}
 	}
 	constructorMap[SS_MSG_TYPE_PM] = func() SSMessage {
 		return &SSPrivateMessage{}
@@ -292,6 +297,20 @@ func (msg SSChannelMessage) messageType() uint32 {
 
 func (msg SSChannelMessage) String() string {
 	return fmt.Sprintf("msg(%s -> %s, %s", msg.From, msg.To, msg.Message)
+}
+
+type SSMembershipEnd struct {
+	Channel SSChannelId
+	Client  SSClientId
+	Reason  string
+}
+
+func (msg SSMembershipEnd) messageType() uint32 {
+	return SS_MSG_TYPE_MEMBERSHIP_END
+}
+
+func (msg SSMembershipEnd) String() string {
+	return fmt.Sprintf("part(%s, %s, %s)", msg.Channel, msg.Client, msg.Reason)
 }
 
 type SSModeDelta uint8

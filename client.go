@@ -14,6 +14,7 @@ type Client struct {
 	Ip, Vip       string
 	Gecos         string
 	Ts            time.Time
+	Member        map[*Channel]*Membership
 }
 
 func (c *Client) Id() SSClientId {

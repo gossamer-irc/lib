@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"log"
 	"strings"
 	"unicode/utf8"
 )
@@ -157,14 +158,15 @@ func SerializeChannelModeChange(channel *Channel, actor *Client, channelMode Cha
 func FilterChannelModes(channel *Channel, actor *Client, channelMode ChannelModeDelta, memberDelta []MemberModeDelta) (ChannelModeDelta, []MemberModeDelta) {
 	membership, found := channel.Member[actor]
 	if !found {
+		log.Printf("No actor found")
 		// This user has no authority.
 		return ChannelModeDelta{}, []MemberModeDelta{}
 	}
-
 	outMode := ChannelModeDelta{}
 	outMember := make([]MemberModeDelta, 0)
 
 	for _, delta := range memberDelta {
+		log.Printf("Filtering modes for %s", delta.Client.Nick)
 		outDelta := MemberModeDelta{
 			Client: delta.Client,
 		}

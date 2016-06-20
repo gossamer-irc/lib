@@ -19,7 +19,6 @@ func (n *Node) BeginLink(reader io.ReadCloser, writer io.WriteCloser, logger io.
 	}()
 	link := NewLink(reader, writer, 1024000, GobServerProtocolFactory, ch, n.wg)
 	link.SetName(name)
-	log.Printf("[%s] New link: %s", n.Me.Name, name)
 	n.NewLinks[link] = newLink{link, logger}
 
 	// Say hello.
@@ -32,7 +31,7 @@ func (n *Node) JoinOrCreateChannel(client *Client, subnet *Subnet, name string) 
 	channel, found := subnet.Channel[lname]
 	if !found {
 		// Creating a new channel.
-		channel := NewChannel(subnet, name)
+		channel := NewChannel(n, subnet, name)
 		channel.Ts = time.Now().UTC()
 
 		// Set mode +nt.
@@ -46,6 +45,7 @@ func (n *Node) JoinOrCreateChannel(client *Client, subnet *Subnet, name string) 
 		}
 		channel.LocalMember[client] = mship
 		channel.Member[client] = mship
+		client.Member[channel] = mship
 		subnet.Channel[lname] = channel
 
 		n.SendAll(channel.Serialize())
@@ -66,12 +66,50 @@ func (n *Node) JoinOrCreateChannel(client *Client, subnet *Subnet, name string) 
 		}
 		channel.LocalMember[client] = mship
 		channel.Member[client] = mship
+		client.Member[channel] = mship
 
 		n.SendAll(mship.Serialize(channel, client))
 
 		n.Handler.OnChannelJoin(channel, client, mship)
 	}
 	return channel, nil
+}
+
+func (n *Node) PartChannel(channel *Channel, client *Client, reason string) {
+	_, found := channel.LocalMember[client]
+	if !found {
+		return
+	}
+
+	n.Handler.OnChannelPart(channel, client, reason)
+
+	delete(channel.Member, client)
+	delete(channel.LocalMember, client)
+	delete(client.Member, channel)
+	if len(channel.Member) == 0 {
+		delete(channel.Subnet.Channel, channel.Lname)
+	}
+
+	n.SendAll(&SSMembershipEnd{
+		Channel: channel.Id(),
+		Client:  client.Id(),
+		Reason:  reason,
+	})
+}
+
+func (n *Node) Quit(client *Client, reason string) {
+	if !client.IsLocal() {
+		return
+	}
+	n.processQuit(client, reason)
+
+	n.SendAll(&SSKill{
+		Id:         client.Id(),
+		Server:     n.Me.Name,
+		Authority:  true,
+		Reason:     reason,
+		ReasonCode: SS_KILL_REASON_QUIT,
+	})
 }
 
 func (n *Node) ChannelMessage(client *Client, channel *Channel, message string) {
@@ -84,6 +122,7 @@ func (n *Node) ChannelMessage(client *Client, channel *Channel, message string) 
 }
 
 func (n *Node) ChangeChannelMode(client *Client, channel *Channel, channelModes ChannelModeDelta, memberModes []MemberModeDelta) {
+	log.Printf("CCM")
 	channelModes, memberModes = FilterChannelModes(channel, client, channelModes, memberModes)
 	n.SendAll(SerializeChannelModeChange(channel, client, channelModes, memberModes))
 	appliedDelta, appliedMembers := channel.ApplyModeDelta(channelModes, memberModes)

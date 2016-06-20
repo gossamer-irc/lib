@@ -6,6 +6,7 @@ type EventHandler interface {
 	OnChannelMessage(from *Client, to *Channel, message string)
 	OnChannelModeChange(channel *Channel, by *Client, delta ChannelModeDelta, memberDelta []MemberModeDelta)
 	OnPrivateMessage(from *Client, to *Client, message string)
+	OnChannelPart(channel *Channel, client *Client, reason string)
 }
 
 type ProxyEventHandler struct {
@@ -39,5 +40,11 @@ func (peh *ProxyEventHandler) OnChannelMessage(from *Client, to *Channel, messag
 func (peh *ProxyEventHandler) OnChannelModeChange(channel *Channel, by *Client, delta ChannelModeDelta, memberDelta []MemberModeDelta) {
 	if peh.Delegate != nil {
 		peh.Delegate.OnChannelModeChange(channel, by, delta, memberDelta)
+	}
+}
+
+func (peh *ProxyEventHandler) OnChannelPart(channel *Channel, client *Client, reason string) {
+	if peh.Delegate != nil {
+		peh.Delegate.OnChannelPart(channel, client, reason)
 	}
 }

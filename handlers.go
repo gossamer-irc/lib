@@ -33,6 +33,8 @@ func (n *Node) handleLinkMessage(msg SSMessage, from *Server) {
 		n.handleChannel(msg, from)
 	case *SSMembership:
 		n.handleMembership(msg, from)
+	case *SSMembershipEnd:
+		n.handleMembershipEnd(msg, from)
 	case *SSPrivateMessage:
 		n.handlePrivateMessage(msg, from)
 	case *SSChannelMessage:
@@ -78,7 +80,7 @@ func (n *Node) handleChannel(msg *SSChannel, from *Server) {
 		log.Fatalf("[%s] on channel message [%s] unknown subnet: %s", n.Me.Name, msg.String(), msg.Subnet)
 	}
 	// Create a channel optimistically. It'll be thrown away if the channel exists locally.
-	channel := NewChannel(subnet, msg.Name)
+	channel := NewChannel(n, subnet, msg.Name)
 	channel.Ts = msg.Ts
 
 	// Whether we trust remote and/or local modes is determined by the relative timestamps of the channels.
@@ -232,10 +234,38 @@ func (n *Node) handleMembership(msg *SSMembership, from *Server) {
 	}
 
 	channel.Member[client] = mship
+	client.Member[channel] = mship
+
 	n.Handler.OnChannelJoin(channel, client, mship)
 	if mode {
 		n.Handler.OnChannelModeChange(channel, nil, ChannelModeDelta{}, []MemberModeDelta{delta})
 	}
+	n.SendAllSkip(msg, from)
+}
+
+func (n *Node) handleMembershipEnd(msg *SSMembershipEnd, from *Server) {
+	channel, found := n.lookupChannelById(msg.Channel)
+	if !found {
+		return
+	}
+	client, found := n.lookupClientById(msg.Client)
+	if !found {
+		return
+	}
+	_, found = channel.Member[client]
+	if !found {
+		return
+	}
+
+	n.Handler.OnChannelPart(channel, client, msg.Reason)
+
+	delete(channel.Member, client)
+	delete(channel.LocalMember, client)
+	delete(client.Member, channel)
+	if len(channel.Member) == 0 {
+		delete(channel.Subnet.Channel, channel.Lname)
+	}
+
 	n.SendAllSkip(msg, from)
 }
 
@@ -251,6 +281,7 @@ func (n *Node) handleClient(msg *SSClient, from *Server) {
 		Vip:    msg.Vip,
 		Gecos:  msg.Gecos,
 		Ts:     msg.Ts,
+		Member: make(map[*Channel]*Membership),
 	}
 	server, found := n.Network[msg.Server]
 	if !found {

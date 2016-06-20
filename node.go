@@ -197,6 +197,18 @@ func (n *Node) processSplit(server *Server, err string) {
 }
 
 func (n *Node) processQuit(client *Client, reason string) {
+	log.Printf("[%s] processing quit of %s:%s", n.Me.Name, client.Subnet.Name, client.Nick)
+
+	for channel, _ := range client.Member {
+		delete(channel.Member, client)
+		delete(channel.LocalMember, client)
+		delete(client.Member, channel)
+
+		if len(channel.Member) == 0 {
+			delete(channel.Subnet.Channel, channel.Lname)
+		}
+	}
+
 	delete(client.Subnet.Client, client.Lnick)
 }
 

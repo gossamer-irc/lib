@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 type testNetwork struct {
@@ -100,6 +101,7 @@ func (ts *testServer) NewClient(nick string) *testClient {
 			Host:   fmt.Sprintf("host.%s", nick),
 			Gecos:  nick,
 			Ts:     time.Unix(ts.ts, 0),
+			Member: make(map[*Channel]*Membership),
 		},
 	}
 	ts.node.AttachClient(tc.client)
@@ -135,7 +137,25 @@ func (tc *testClient) Join(tch *testChannel) {
 	tc.host.net.Sync()
 }
 
-func (tc *testClient) findOn(node *Node) *Client {
+func (tc *testClient) Part(tch *testChannel, reason string) {
+	tc.host.node.Do(func() {
+		channel, found := tc.host.node.DefaultSubnet.Channel[tch.name]
+		if !found {
+			tc.host.net.t.Fatalf("Can't find channel to leave: %s", tch.name)
+		}
+		tc.host.node.PartChannel(channel, tc.client, reason)
+	})
+	tc.host.net.Sync()
+}
+
+func (tc *testClient) Quit(reason string) {
+	tc.host.node.Do(func() {
+		tc.host.node.Quit(tc.client, reason)
+	})
+	tc.host.net.Sync()
+}
+
+func (tc *testClient) findOn(node *Node) (*Client, bool) {
 	ch := make(chan *Client)
 	node.Do(func() {
 		client, found := node.DefaultSubnet.Client[tc.client.Lnick]
@@ -148,9 +168,10 @@ func (tc *testClient) findOn(node *Node) *Client {
 
 	client := <-ch
 	if client == nil {
+		return nil, false
 		tc.host.net.t.Fatalf("Failed to find client %s on server %s", tc.client.Nick, node.Me.Name)
 	}
-	return client
+	return client, true
 }
 
 func (tc *testClient) SetChannelMode(tch *testChannel, mode string, arg ...interface{}) {
@@ -163,17 +184,18 @@ func (tc *testClient) SetChannelMode(tch *testChannel, mode string, arg ...inter
 	delta := ChannelModeDelta{}
 	memberDelta := make([]MemberModeDelta, 0)
 	argIdx := 0
-	for _, r := range []rune(mode) {
+	for {
+		r, sz := utf8.DecodeRuneInString(mode)
+		if sz == 0 {
+			break
+		}
+		mode = mode[sz:]
 		switch r {
 		case '+':
 			operation = MODE_ADDED
 		case '-':
 			operation = MODE_REMOVED
-		case 'q':
-		case 'a':
-		case 'o':
-		case 'h':
-		case 'v':
+		case 'q', 'a', 'o', 'h', 'v':
 			if len(arg) <= argIdx {
 				tc.host.net.t.Fatalf("Missing argument for mode '%v'", r)
 			}
@@ -182,7 +204,10 @@ func (tc *testClient) SetChannelMode(tch *testChannel, mode string, arg ...inter
 				tc.host.net.t.Fatalf("Wrong argument type for mode '%v': %v", r, arg)
 			}
 			argIdx++
-			target := testTarget.findOn(tc.host.net.root.node)
+			target, found := testTarget.findOn(tc.host.node)
+			if !found {
+				tc.host.net.t.Fatalf("Not found")
+			}
 			mdEntry := MemberModeDelta{
 				Client: target,
 			}
@@ -200,7 +225,6 @@ func (tc *testClient) SetChannelMode(tch *testChannel, mode string, arg ...inter
 			default:
 				tc.host.net.t.FailNow()
 			}
-
 			memberDelta = append(memberDelta, mdEntry)
 		}
 	}
@@ -348,7 +372,10 @@ type membershipSelector struct {
 }
 
 func (ms *membershipSelector) Select(ts *testServer) *Membership {
-	client := ms.target.findOn(ts.node)
+	client, found := ms.target.findOn(ts.node)
+	if !found {
+		return nil
+	}
 	channel, found := ts.node.DefaultSubnet.Channel[ms.channel.name]
 	if !found {
 		// Not finding the channel is considered not finding the member,
